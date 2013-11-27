@@ -1,0 +1,29 @@
+OASISFormat: 0.3
+Name: ucl
+OCamlVersion:     >= 4.00
+Version: 0.0.1
+Synopsis: UCL language parser
+Authors: Vsevolod Stakhov
+License: ISC
+Plugins: META (0.3), DevFiles (0.3)
+BuildTools: ocamlbuild, menhir
+
+Library ucl
+  Path: lib
+  Modules: Ucl
+  Findlibname: ucl
+  BuildDepends: easy-format, biniou
+
+Executable test
+  Path: lib_test
+  MainIs: test.ml
+  Build$: flag(tests)
+  Custom: true
+  CompiledObject: best
+  Install: false
+  BuildDepends: ucl, oUnit
+
+Test test
+  Run$: flag(tests)
+  Command: $test
+  WorkingDirectory: lib_test

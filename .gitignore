@@ -1,0 +1,8 @@
+*.cma
+*.cmo
+*.a
+*.o
+*.annot
+*.cmi
+META
+_build/
