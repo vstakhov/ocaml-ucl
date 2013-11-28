@@ -30,23 +30,23 @@ let rec output_obj init obj =
 and output_list init arr =
 	let list_out input =
 		List.fold_left (fun buf v ->
-			if buf == "" then
+			if buf = "" then
 				buf ^ (output_obj "" v)
 			else 
 				buf ^ ", " ^ (output_obj "" v)
 			) input arr
 	in
-	init ^ "[" ^ list_out "" ^ "]"
+	init ^ "[\n" ^ list_out "" ^ "\n]"
 
 and output_assoc init obj =
 	let obj_out input =
 		List.fold_left (fun buf (key, value) ->
 				buf ^ (Printf.sprintf "%s\"%s\": %s" 
-						(if buf == "" then "" else ",\n") 
+						(if buf = "" then "" else ",\n") 
 						key (output_obj "" value))
 				) input obj
 	in
-	init ^ "{" ^ obj_out "" ^ "}"
+	init ^ "{\n" ^ obj_out "" ^ "\n}"
 
 let rec parse_to_string lexbuf =
 	let rec parse_to_string_rec str =
