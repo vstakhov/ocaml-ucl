@@ -10,9 +10,9 @@ BuildTools: ocamlbuild, menhir
 
 Library ucl
   Path: lib
-  Modules: Ucl
+  Modules: Ucl_parser
+  InternalModules: Lexer,Parser
   Findlibname: ucl
-  BuildDepends: easy-format, biniou
 
 Executable test
   Path: lib_test

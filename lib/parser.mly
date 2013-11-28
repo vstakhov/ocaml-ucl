@@ -13,10 +13,10 @@
 %token COMMA
 %token EOF
 
-%start <Ucl.ucl option> ucl
+%start <Ucl.ucl option> parse
 %%
 
-ucl:
+parse:
   | EOF      { None }
   | v = value { Some v }
   ;

@@ -1,7 +1,6 @@
-(* open Core.Std *)
-open Lexer
 open Lexing
-open Bi_outbuf
+open Lexer
+open Ucl
 
 let print_position outx lexbuf =
 	let pos = lexbuf.lex_curr_p in
@@ -9,7 +8,7 @@ let print_position outx lexbuf =
 		pos.pos_lnum (pos.pos_cnum - pos.pos_bol + 1)
 
 let parse_with_error lexbuf =
-	try Parser.ucl Lexer.read lexbuf with
+	try Parser.parse Lexer.read lexbuf with
 	| SyntaxError msg ->
 			Printf.fprintf stderr "%a: %s\n" print_position lexbuf msg;
 			None
@@ -17,47 +16,61 @@ let parse_with_error lexbuf =
 			Printf.fprintf stderr "%a: syntax error\n" print_position lexbuf;
 			exit (-1)
 			
-let rec output_value ob = function
-	| `Assoc obj -> print_assoc ob obj
-	| `List l -> print_list ob l
-	| `String s -> Bi_outbuf.add_string ob (Printf.sprintf "\"%s\"" s)
-	| `Int i -> Bi_outbuf.add_string ob (Printf.sprintf "%d" i)
-	| `Float x -> Bi_outbuf.add_string ob (Printf.sprintf "%f" x)
-	| `Bool true -> Bi_outbuf.add_string ob "true"
-	| `Bool false -> Bi_outbuf.add_string ob "false"
-	| `Null -> Bi_outbuf.add_string ob "null"
+let rec output_obj init obj = 
+	match obj with
+	| `Assoc obj -> output_assoc init obj
+	| `List l -> output_list init l
+	| `String s -> init ^ (Printf.sprintf "\"%s\"" s)
+	| `Int i -> init ^ (Printf.sprintf "%d" i)
+	| `Float x -> init ^ (Printf.sprintf "%f" x)
+	| `Bool true -> init ^ "true"
+	| `Bool false -> init ^ "false"
+	| `Null -> init ^ "null"
 
-and print_assoc ob obj =
-	Bi_outbuf.add_char ob '{';
-	let sep = ref "" in
-	List.iter ~f: (fun (key, value) ->
-					Bi_outbuf.add_string ob (Printf.sprintf "%s\"%s\": %a" !sep key output_value(ob value));
-					sep := ",\n ") obj;
-	Bi_outbuf.add_char ob '}'
+and output_list init arr =
+	let list_out input =
+		List.fold_left (fun buf v ->
+			if buf == "" then
+				buf ^ (output_obj "" v)
+			else 
+				buf ^ ", " ^ (output_obj "" v)
+			) input arr
+	in
+	init ^ "[" ^ list_out "" ^ "]"
 
-and print_list ob arr =
-	Bi_outbuf.add_char ob '[';
-	List.iteri ~f: (fun i v ->
-					if i > 0 then
-						Bi_outbuf.add_string ob ", ";
-					output_value ob v) arr;
-	Bi_outbuf.add_char ob ']'
+and output_assoc init obj =
+	let obj_out input =
+		List.fold_left (fun buf (key, value) ->
+				buf ^ (Printf.sprintf "%s\"%s\": %s" 
+						(if buf == "" then "" else ",\n") 
+						key (output_obj "" value))
+				) input obj
+	in
+	init ^ "{" ^ obj_out "" ^ "}"
 
-let rec parse_to_ob_rec ob lexbuf =
-	match parse_with_error lexbuf with
-	| Some value ->
-			output_value ob value;
-			parse_to_ob ob lexbuf
-	| None -> ob
+let rec parse_to_string lexbuf =
+	let rec parse_to_string_rec str =
+		match parse_with_error lexbuf with
+		| Some value ->
+				parse_to_string_rec (output_obj str value)
+		| None -> str
+	in
+	parse_to_string_rec ""
 
-let rec parse_to_ob lexbuf =
-	parse_to_ob_rec Bi_outbuf.create lexbuf
+(* Try ... Finally emulation *)
+let unwind ~protect f x =
+  let module E = struct type 'a t = Left of 'a | Right of exn end in
+  let res = try E.Left (f x) with e -> E.Right e in
+  let ()  = protect x in
+  match res with
+  | E.Left  y -> y
+  | E.Right e -> raise e
 
+let with_input_channel inch f =
+  unwind ~protect:close_in f inch
 
 let parse_file filename () =
-	let inx = In_channel.create filename in
-	let lexbuf = Lexing.from_channel inx in
-	lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
-	parse_to_ob lexbuf;
-	In_channel.close inx
-	
+		let inx = open_in filename in
+		let lexbuf = Lexing.from_channel inx in
+		lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
+		with_input_channel inx ~f: (fun () -> parse_to_string lexbuf)

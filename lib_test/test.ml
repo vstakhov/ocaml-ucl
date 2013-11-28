@@ -1,4 +1,4 @@
-Open Ucl
+Open Ucl_parser
 
 let () =
 	Command.basic ~summary:"Parse and display UCL"
