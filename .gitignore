@@ -6,3 +6,4 @@
 *.cmi
 META
 _build/
+setup.data
