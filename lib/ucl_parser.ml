@@ -10,7 +10,7 @@ let print_position outx lexbuf =
 let parse_with_error lexbuf =
 	try Parser.parse Lexer.read lexbuf with
 	| SyntaxError msg ->
-			Printf.fprintf stderr "%a: %s\n" print_position lexbuf msg;
+			Printf.fprintf stderr "%a: lexer error: %s\n" print_position lexbuf msg;
 			None
 	| Parser.Error ->
 			Printf.fprintf stderr "%a: syntax error\n" print_position lexbuf;
