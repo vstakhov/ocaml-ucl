@@ -21,7 +21,7 @@ Executable test
   Custom: true
   CompiledObject: best
   Install: false
-  BuildDepends: ucl, oUnit
+  BuildDepends: core, ucl, oUnit
 
 Test test
   Run$: flag(tests)

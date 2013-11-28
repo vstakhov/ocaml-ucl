@@ -1,5 +1,5 @@
 # OASIS_START
-# DO NOT EDIT (digest: c5689aba84eeee25afe0bb0631543199)
+# DO NOT EDIT (digest: f980659166d369141d0381b2f3242c88)
 # Ignore VCS directories, you can use the same kind of rule outside 
 # OASIS_START/STOP if you want to exclude directories that contains 
 # useless stuff for the build process
@@ -17,8 +17,10 @@
 "lib/ucl.cmxs": use_ucl
 # Executable test
 <lib_test/test.{native,byte}>: use_ucl
+<lib_test/test.{native,byte}>: pkg_core
 <lib_test/test.{native,byte}>: pkg_oUnit
 <lib_test/*.ml{,i}>: use_ucl
+<lib_test/*.ml{,i}>: pkg_core
 <lib_test/*.ml{,i}>: pkg_oUnit
 <lib_test/test.{native,byte}>: custom
 # OASIS_STOP

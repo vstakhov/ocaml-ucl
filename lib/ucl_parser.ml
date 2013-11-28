@@ -69,8 +69,11 @@ let unwind ~protect f x =
 let with_input_channel inch f =
   unwind ~protect:close_in f inch
 
-let parse_file filename () =
-		let inx = open_in filename in
+let parse_file filename =
+	let parse_in_channel inx =
 		let lexbuf = Lexing.from_channel inx in
 		lexbuf.lex_curr_p <- { lexbuf.lex_curr_p with pos_fname = filename };
-		with_input_channel inx ~f: (fun () -> parse_to_string lexbuf)
+		parse_to_string lexbuf
+	in
+	let inx = open_in filename in
+	with_input_channel inx parse_in_channel
