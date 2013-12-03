@@ -15,6 +15,7 @@ type ucl_parser_state = {
 }
 val u_nl : int
 val u_sp : int
+val u_tab : int
 val u_quot : int
 val u_lbrack : int
 val u_rbrack : int
@@ -27,7 +28,11 @@ val u_minus : int
 val u_slash : int
 val u_bslash : int
 val u_times : int
-val is_white_safe : char -> bool
+val is_white_unsafe : char -> bool
+val parser_new_object :
+  ucl_parser_state ->
+  ?skip_char:bool ->
+  ?is_array:bool -> ?set_top:bool -> unit -> ucl_parser_state
 val parser_handle_init : ucl_parser_state -> string -> ucl_parser_state
 val parser_handle_key : 'a -> 'b -> 'a
 val parser_handle_value : 'a -> 'b -> 'a

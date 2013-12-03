@@ -22,6 +22,7 @@ type ucl_parser_state = {
 
 let u_nl = 0x0A (* \n *)
 let u_sp = 0x20 (* *)
+let u_tab = 0x09 (* *)
 let u_quot = 0x22 (* '' *)
 let u_lbrack = 0x5B (* [ *)
 let u_rbrack = 0x5D (* ] *)
@@ -35,39 +36,31 @@ let u_slash = 0x2F (* / *)
 let u_bslash = 0x5C (* \ *)
 let u_times = 0x2A (* * *)
 
-let is_white_safe c =
+let is_white_unsafe c =
 	match Char.code c with
-	| 0x20 | 0x09 | 0x0A -> true
+	| c when c = u_sp || c = u_nl || c = u_tab -> true
 	| _ -> false
+
+let parser_new_object state ?(skip_char=true) ?(is_array=false) ?(set_top=false) () =
+	let nobj = if is_array then `List [] else `Assoc (Hashtbl.create 32) in
+	{
+		state with
+		column = if skip_char then state.column + 1 else state.column;
+		state = if is_array then UCL_STATE_READ_VALUE else UCL_STATE_READ_KEY;
+		stack = nobj :: state.stack; 
+		top = if set_top then nobj else state.top;
+	}
 
 let parser_handle_init state line =
 	match line.[state.column] with
-	| '#' -> { state with prev_state = UCL_STATE_INIT; state = UCL_STATE_COMMENT}
-	| '{' -> let ntop = `Assoc (Hashtbl.create 32) in 
-		{
-			state with 
-			top = ntop; 
-			stack = ntop :: state.stack; column = state.column + 1; 
-			state = UCL_STATE_READ_KEY
-		}
-	| '[' -> let ntop = `List [] in 
-		{ 
-			state with 
-			top = ntop; 
-			stack = ntop :: state.stack; 
-			column = state.column + 1;
-			state = UCL_STATE_READ_VALUE
-		}
-	| c -> if is_white_safe c then 
-		{state with column = state.column + 1 }
+	| '#' -> { state with prev_state = UCL_STATE_INIT; state = UCL_STATE_COMMENT }
+	| '{' -> parser_new_object state ~set_top:true ()
+	| '[' -> parser_new_object state ~is_array:true ~set_top:false ()
+	| c -> 
+		if is_white_unsafe c then 
+			{ state with column = state.column + 1 }
 		else (* Assume object *)
-		let  ntop = `Assoc (Hashtbl.create 32) in 
-		{
-			state with 
-			top = ntop; 
-			stack = ntop :: state.stack;
-			state = UCL_STATE_READ_KEY
-		}
+			parser_new_object state ~skip_char:false ()
 
 let parser_handle_key state line = 
 	state
