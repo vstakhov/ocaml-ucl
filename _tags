@@ -24,5 +24,4 @@
 <lib_test/*.ml{,i}>: pkg_oUnit
 <lib_test/test.{native,byte}>: custom
 # OASIS_STOP
-true: use_menhir
 true: thread

@@ -6,12 +6,12 @@ Synopsis: UCL language parser
 Authors: Vsevolod Stakhov
 License: ISC
 Plugins: META (0.3), DevFiles (0.3)
-BuildTools: ocamlbuild, menhir
+BuildTools: ocamlbuild
 
 Library ucl
   Path: lib
-  Modules: Ucl_parser
-  InternalModules: Lexer,Parser
+  Modules: Ucl_parser,Ucl_emitter
+  InternalModules: Ucl_util
   Findlibname: ucl
 
 Executable test
