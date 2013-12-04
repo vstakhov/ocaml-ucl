@@ -39,11 +39,19 @@ let u_slash = 0x2F (* / *)
 let u_bslash = 0x5C (* \ *)
 let u_times = 0x2A (* * *)
 
+(** Match any whitespace character including newlines *)
 let is_white_unsafe c =
 	match Char.code c with
 	| c when c = u_sp || c = u_nl || c = u_tab -> true
 	| _ -> false
 
+(** Match whitespace character excluding newlines *)
+let is_white_safe c =
+	match Char.code c with
+	| c when c = u_sp || c = u_tab -> true
+	| _ -> false
+
+(** Append new object or array to the stack of parser *)
 let parser_new_object state ?(skip_char=true) ?(is_array=false) ?(set_top=false) () =
 	let nobj = if is_array then `List [] else `Assoc (Hashtbl.create 32) in
 	{
@@ -55,11 +63,27 @@ let parser_new_object state ?(skip_char=true) ?(is_array=false) ?(set_top=false)
 		top = if set_top then nobj else state.top;
 	}
 
+(** Check for multiline comment if previous char is '/' *)
 let parser_is_comment state line =
-	if state.remain > 0 && line.[state.column + 1] = '*' then
-		true
+	if state.remain > 0 then
+		if (line.[state.column] = '/' && line.[state.column + 1] = '*') ||
+		 line.[state.column] = '#' then
+			true
+		else
+			false
 	else
 		false
+
+(** Skip characters when predicate is true *)	
+let rec parser_skip_chars test_func state line =
+	if state.remain > 0 then
+		if test_func line.[state.column] then
+			parser_skip_chars test_func 
+				{ state with column = state.column + 1; } line
+		else
+			state
+	else
+		state
 
 let parser_handle_init state line =
 	match line.[state.column] with
@@ -71,15 +95,25 @@ let parser_handle_init state line =
 			{ state with prev_state = UCL_STATE_INIT; state = UCL_STATE_COMMENT }
 		else 
 			raise (UCL_Syntax_Error ("Invalid starting character", state))
-			
 	| c -> 
 		if is_white_unsafe c then 
 			{ state with column = state.column + 1 }
 		else (* Assume object *)
 			parser_new_object state ~skip_char:false ()
 
-let parser_handle_key state line = 
-	state
+let rec parser_handle_key state line = 
+	match line.[state.column] with
+	| '/' | '#' -> 
+		if parser_is_comment state line then
+			{ state with prev_state = UCL_STATE_READ_KEY; state = UCL_STATE_COMMENT }
+		else 
+			raise (UCL_Syntax_Error ("Invalid starting character", state))
+	| c ->
+		if is_white_safe c then
+			(* Skip whitespaces at the beginning *)
+			parser_handle_key (parser_skip_chars is_white_safe state line) line
+		else
+			state
 	
 let parser_handle_value state line =
 	state

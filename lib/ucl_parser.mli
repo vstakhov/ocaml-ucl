@@ -31,13 +31,16 @@ val u_slash : int
 val u_bslash : int
 val u_times : int
 val is_white_unsafe : char -> bool
+val is_white_safe : char -> bool
 val parser_new_object :
   ucl_parser_state ->
   ?skip_char:bool ->
   ?is_array:bool -> ?set_top:bool -> unit -> ucl_parser_state
 val parser_is_comment : ucl_parser_state -> string -> bool
+val parser_skip_chars :
+  (char -> bool) -> ucl_parser_state -> string -> ucl_parser_state
 val parser_handle_init : ucl_parser_state -> string -> ucl_parser_state
-val parser_handle_key : 'a -> 'b -> 'a
+val parser_handle_key : ucl_parser_state -> string -> ucl_parser_state
 val parser_handle_value : 'a -> 'b -> 'a
 val parser_handle_after_value : 'a -> 'b -> 'a
 val parser_handle_comment : 'a -> 'b -> 'a
