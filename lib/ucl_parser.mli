@@ -12,7 +12,9 @@ type ucl_parser_state = {
   buf : Buffer.t;
   stack : Ucl.ucl list;
   top : Ucl.ucl;
+  remain : int;
 }
+exception UCL_Syntax_Error of (string * ucl_parser_state)
 val u_nl : int
 val u_sp : int
 val u_tab : int
@@ -33,11 +35,12 @@ val parser_new_object :
   ucl_parser_state ->
   ?skip_char:bool ->
   ?is_array:bool -> ?set_top:bool -> unit -> ucl_parser_state
+val parser_is_comment : ucl_parser_state -> string -> bool
 val parser_handle_init : ucl_parser_state -> string -> ucl_parser_state
 val parser_handle_key : 'a -> 'b -> 'a
 val parser_handle_value : 'a -> 'b -> 'a
 val parser_handle_after_value : 'a -> 'b -> 'a
 val parser_handle_comment : 'a -> 'b -> 'a
-val parser_state_machine : ucl_parser_state -> in_channel -> ucl_parser_state
+val parser_parse_stream : ucl_parser_state -> in_channel -> ucl_parser_state
 val parse_in_channel : in_channel -> Ucl.ucl
 val parse_file : string -> Ucl.ucl
