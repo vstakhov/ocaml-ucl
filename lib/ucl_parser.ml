@@ -97,9 +97,19 @@ let parser_handle_init state line =
 			raise (UCL_Syntax_Error ("Invalid starting character", state))
 	| c -> 
 		if is_white_unsafe c then 
-			{ state with column = state.column + 1 }
+			{ state with column = state.column + 1; remain = state.remain - 1 }
 		else (* Assume object *)
 			parser_new_object state ~skip_char:false ()
+
+let parser_read_escape_sequence state line = 
+	state
+
+let rec parser_read_quoted_string state line = 
+	match line.[state.column] with
+	| '\\' -> parser_read_escape_sequence {state with column = state.column - 1; remain = state.remain - 1} line
+	| '"' -> {state with prev_state = UCL_STATE_READ_KEY; state = UCL_STATE_READ_VALUE}
+	| c -> Buffer.add_char state.buf c; 
+	parser_read_quoted_string {state with column = state.column - 1; remain = state.remain - 1} line
 
 let rec parser_handle_key state line = 
 	match line.[state.column] with
@@ -113,7 +123,12 @@ let rec parser_handle_key state line =
 			(* Skip whitespaces at the beginning *)
 			parser_handle_key (parser_skip_chars is_white_safe state line) line
 		else
-			state
+			match c with
+			| '"' -> 
+				parser_read_quoted_string {state with column = state.column - 1; remain = state.remain - 1; 
+				buf = Buffer.create 32 } line
+			| c -> state
+		
 	
 let parser_handle_value state line =
 	state
