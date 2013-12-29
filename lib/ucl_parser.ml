@@ -123,16 +123,64 @@ let parser_handle_init state line =
 			parser_skip_chars is_white_unsafe state line
 		else (* Assume object *)
 			parser_new_object state line ~skip_char:false ()
-
-let parser_read_escape_sequence state line = 
-	state
 	
 let rec parser_read_quoted_string state line = 
 	match line.[state.pos] with
-	| '\\' -> parser_read_escape_sequence (parser_next_char state line) line
+	| '\\' -> parser_read_quoted_string 
+			(parser_read_escape_sequence (parser_next_char state line) line) line
 	| '"' -> {state with prev_state = UCL_STATE_READ_KEY; state = UCL_STATE_READ_VALUE}
 	| c -> Buffer.add_char state.buf c; 
-	parser_read_quoted_string (parser_next_char state line) line
+		parser_read_quoted_string (parser_next_char state line) line
+and parser_read_escape_sequence state line = 
+	match line.[state.pos] with
+	| 'n' -> Buffer.add_char state.buf '\n'; state
+	| 'r' -> Buffer.add_char state.buf '\r'; state
+	| 't' -> Buffer.add_char state.buf '\t'; state
+	| 'b' -> Buffer.add_char state.buf '\b'; state
+	| '\\' -> Buffer.add_char state.buf '\\'; state
+	| 'u' -> parser_read_unicode_escape (parser_next_char state line) line
+	| _ -> raise (UCL_Syntax_Error ("Invalid escape character", state))
+and parser_read_unicode_escape state line =
+	let rec parser_unicode_helper res level state line =
+		if level == 3 then
+			(parser_add_unicode_character res state; state)
+		else
+			match line.[state.pos] with
+			| '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' ->
+				let newres = (res lsl 4) + (parser_hexcode line.[state.pos] state) in
+				parser_unicode_helper newres (level + 1) (parser_next_char state line) line
+			| _ -> raise (UCL_Syntax_Error ("Invalid unicode escape character", state))
+	in
+	parser_unicode_helper 0 0 state line
+and parser_hexcode c state =
+	let lc = Char.lowercase c in
+	match lc with
+	| '0' .. '9' -> Char.code lc - Char.code '0'
+	| 'a' .. 'f' -> Char.code lc - Char.code 'a' + 10
+	| c -> raise (UCL_Syntax_Error ("Invalid hex character", state))
+and parser_add_unicode_character num state =
+	if num < 0x80 then
+		Buffer.add_char state.buf (char_of_int num)
+	else if num < 0x800 then
+		(
+			Buffer.add_char state.buf (char_of_int (0xC0 + ((num land 0x7C0) lsr 6)));
+			Buffer.add_char state.buf (char_of_int (0x80 + (num land 0x3F)))
+		)
+	else if num < 0x10000 then
+		(
+			Buffer.add_char state.buf (char_of_int (0xE0 + ((num land 0xF000) lsr 12)));
+			Buffer.add_char state.buf (char_of_int (0x80 + ((num land 0xFC0) lsr 6)));
+			Buffer.add_char state.buf (char_of_int (0x80 + (num land 0x3F)))
+		)
+	else if num <= 0x10FFFF then
+		(
+			Buffer.add_char state.buf (char_of_int (0xF0 + ((num land 0x1C0000) lsr 18)));
+			Buffer.add_char state.buf (char_of_int (0x80 + ((num land 0x03F000) lsr 12)));
+			Buffer.add_char state.buf (char_of_int (0x80 + ((num land 0xFC0) lsr 6)));
+			Buffer.add_char state.buf (char_of_int (0x80 + (num land 0x3F)))
+		)
+	else
+		raise (UCL_Syntax_Error ("Invalid unicode escape value", state))
 
 let rec parser_handle_key state line = 
 	match line.[state.column] with
