@@ -9,10 +9,12 @@ type ucl_state =
 	| UCL_STATE_READ_VALUE
 	| UCL_STATE_AFTER_VALUE
 	| UCL_STATE_COMMENT
+	| UCL_STATE_END
 
 type ucl_parser_state = {
 	line : int;
 	column : int;
+	pos : int;
 	state : ucl_state;
 	prev_state : ucl_state;
 	buf : Buffer.t;
@@ -51,23 +53,45 @@ let is_white_safe c =
 	| c when c = u_sp || c = u_tab -> true
 	| _ -> false
 
+(** Go to the next char *)
+let parser_next_char state line =
+	if state.remain > 0 then
+		match line.[state.column] with
+		| '\n' -> { state with 
+									column = 0; 
+									line = state.line + 1; 
+									pos = state.pos + 1; 
+									remain = state.remain - 1}
+		| c -> { state with 
+									column = state.column + 1; 
+									pos = state.pos + 1; 
+									remain = state.remain - 1}
+	else
+		{ state with state = UCL_STATE_END }
+
 (** Append new object or array to the stack of parser *)
-let parser_new_object state ?(skip_char=true) ?(is_array=false) ?(set_top=false) () =
+let parser_new_object state line ?(skip_char=true) ?(is_array=false) ?(set_top=false) () =
 	let nobj = if is_array then `List [] else `Assoc (Hashtbl.create 32) in
-	{
-		state with
-		column = if skip_char then state.column + 1 else state.column;
-		remain = if skip_char then state.remain - 1 else state.remain;
+	if skip_char then
+		{
+		(parser_next_char state line) with
 		state = if is_array then UCL_STATE_READ_VALUE else UCL_STATE_READ_KEY;
 		stack = nobj :: state.stack; 
 		top = if set_top then nobj else state.top;
-	}
+		}
+	else
+		{
+		state with
+		state = if is_array then UCL_STATE_READ_VALUE else UCL_STATE_READ_KEY;
+		stack = nobj :: state.stack; 
+		top = if set_top then nobj else state.top;
+		}
 
 (** Check for multiline comment if previous char is '/' *)
 let parser_is_comment state line =
 	if state.remain > 0 then
-		if (line.[state.column] = '/' && line.[state.column + 1] = '*') ||
-		 line.[state.column] = '#' then
+		if (state.pos > 1 && line.[state.pos] = '/' && line.[state.pos + 1] = '*') ||
+		 line.[state.pos] = '#' then
 			true
 		else
 			false
@@ -77,19 +101,18 @@ let parser_is_comment state line =
 (** Skip characters when predicate is true *)	
 let rec parser_skip_chars test_func state line =
 	if state.remain > 0 then
-		if test_func line.[state.column] then
-			parser_skip_chars test_func 
-				{ state with column = state.column + 1; } line
+		if test_func line.[state.pos] then
+			parser_skip_chars test_func (parser_next_char state line) line
 		else
 			state
 	else
 		state
 
 let parser_handle_init state line =
-	match line.[state.column] with
+	match line.[state.pos] with
 	| '#' -> { state with prev_state = UCL_STATE_INIT; state = UCL_STATE_COMMENT }
-	| '{' -> parser_new_object state ~set_top:true ()
-	| '[' -> parser_new_object state ~is_array:true ~set_top:false ()
+	| '{' -> parser_new_object state line ~set_top:true ()
+	| '[' -> parser_new_object state line ~is_array:true ~set_top:false ()
 	| '/' -> 
 		if parser_is_comment state line then
 			{ state with prev_state = UCL_STATE_INIT; state = UCL_STATE_COMMENT }
@@ -97,19 +120,19 @@ let parser_handle_init state line =
 			raise (UCL_Syntax_Error ("Invalid starting character", state))
 	| c -> 
 		if is_white_unsafe c then 
-			{ state with column = state.column + 1; remain = state.remain - 1 }
+			parser_skip_chars is_white_unsafe state line
 		else (* Assume object *)
-			parser_new_object state ~skip_char:false ()
+			parser_new_object state line ~skip_char:false ()
 
 let parser_read_escape_sequence state line = 
 	state
-
+	
 let rec parser_read_quoted_string state line = 
-	match line.[state.column] with
-	| '\\' -> parser_read_escape_sequence {state with column = state.column - 1; remain = state.remain - 1} line
+	match line.[state.pos] with
+	| '\\' -> parser_read_escape_sequence (parser_next_char state line) line
 	| '"' -> {state with prev_state = UCL_STATE_READ_KEY; state = UCL_STATE_READ_VALUE}
 	| c -> Buffer.add_char state.buf c; 
-	parser_read_quoted_string {state with column = state.column - 1; remain = state.remain - 1} line
+	parser_read_quoted_string (parser_next_char state line) line
 
 let rec parser_handle_key state line = 
 	match line.[state.column] with
@@ -125,8 +148,7 @@ let rec parser_handle_key state line =
 		else
 			match c with
 			| '"' -> 
-				parser_read_quoted_string {state with column = state.column - 1; remain = state.remain - 1; 
-				buf = Buffer.create 32 } line
+				parser_read_quoted_string {(parser_next_char state line) with buf = Buffer.create 32 } line
 			| c -> state
 		
 	
@@ -153,6 +175,7 @@ let parser_parse_stream state inx =
 					parser_state_machine (parser_handle_after_value state line) line inx
 			| UCL_STATE_COMMENT ->
 					parser_state_machine (parser_handle_comment state line) line inx
+			| UCL_STATE_END -> state
 		in
 		if state.remain > 0 then
 			parser_parse_line state init
@@ -170,6 +193,7 @@ let parse_in_channel inx =
 	let init_state = {
 		line = 0;
 		column = 0;
+		pos = 0;
 		state = UCL_STATE_INIT;
 		buf = Buffer.create 32;
 		stack = [];
