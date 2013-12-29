@@ -11,19 +11,27 @@ type ucl_state =
 	| UCL_STATE_COMMENT
 	| UCL_STATE_END
 
+type ucl_buf = [
+	| `Buf of Buffer.t
+	| `Null
+]
+
 type ucl_parser_state = {
 	line : int;
 	column : int;
 	pos : int;
 	state : ucl_state;
 	prev_state : ucl_state;
-	buf : Buffer.t;
+	buf : ucl_buf;
+	key : ucl_buf;
+	value : ucl_buf;
 	stack : ucl list;
 	top : ucl;
 	remain : int;
 }
 
 exception UCL_Syntax_Error of (string * ucl_parser_state)
+exception UCL_InternalError of string
 
 let u_nl = 0x0A (* \n *)
 let u_sp = 0x20 (* *)
@@ -87,6 +95,11 @@ let parser_new_object state line ?(skip_char=true) ?(is_array=false) ?(set_top=f
 		top = if set_top then nobj else state.top;
 		}
 
+let parser_buf_add_char buf c =
+	match buf with
+	| `Buf b -> Buffer.add_char b c
+	| `Null -> raise (UCL_InternalError "Buffer is not initialized")
+
 (** Check for multiline comment if previous char is '/' *)
 let parser_is_comment state line =
 	if state.remain > 0 then
@@ -108,36 +121,21 @@ let rec parser_skip_chars test_func state line =
 	else
 		state
 
-let parser_handle_init state line =
-	match line.[state.pos] with
-	| '#' -> { state with prev_state = UCL_STATE_INIT; state = UCL_STATE_COMMENT }
-	| '{' -> parser_new_object state line ~set_top:true ()
-	| '[' -> parser_new_object state line ~is_array:true ~set_top:false ()
-	| '/' -> 
-		if parser_is_comment state line then
-			{ state with prev_state = UCL_STATE_INIT; state = UCL_STATE_COMMENT }
-		else 
-			raise (UCL_Syntax_Error ("Invalid starting character", state))
-	| c -> 
-		if is_white_unsafe c then 
-			parser_skip_chars is_white_unsafe state line
-		else (* Assume object *)
-			parser_new_object state line ~skip_char:false ()
-	
+(** Parse a quoted string and decode JSON escapes *)
 let rec parser_read_quoted_string state line = 
 	match line.[state.pos] with
 	| '\\' -> parser_read_quoted_string 
 			(parser_read_escape_sequence (parser_next_char state line) line) line
-	| '"' -> {state with prev_state = UCL_STATE_READ_KEY; state = UCL_STATE_READ_VALUE}
-	| c -> Buffer.add_char state.buf c; 
+	| '"' -> state
+	| c -> parser_buf_add_char state.buf c; 
 		parser_read_quoted_string (parser_next_char state line) line
 and parser_read_escape_sequence state line = 
 	match line.[state.pos] with
-	| 'n' -> Buffer.add_char state.buf '\n'; state
-	| 'r' -> Buffer.add_char state.buf '\r'; state
-	| 't' -> Buffer.add_char state.buf '\t'; state
-	| 'b' -> Buffer.add_char state.buf '\b'; state
-	| '\\' -> Buffer.add_char state.buf '\\'; state
+	| 'n' -> parser_buf_add_char state.buf '\n'; state
+	| 'r' -> parser_buf_add_char state.buf '\r'; state
+	| 't' -> parser_buf_add_char state.buf '\t'; state
+	| 'b' -> parser_buf_add_char state.buf '\b'; state
+	| '\\' -> parser_buf_add_char state.buf '\\'; state
 	| 'u' -> parser_read_unicode_escape (parser_next_char state line) line
 	| _ -> raise (UCL_Syntax_Error ("Invalid escape character", state))
 and parser_read_unicode_escape state line =
@@ -160,28 +158,46 @@ and parser_hexcode c state =
 	| c -> raise (UCL_Syntax_Error ("Invalid hex character", state))
 and parser_add_unicode_character num state =
 	if num < 0x80 then
-		Buffer.add_char state.buf (char_of_int num)
+		parser_buf_add_char state.buf (char_of_int num)
 	else if num < 0x800 then
 		(
-			Buffer.add_char state.buf (char_of_int (0xC0 + ((num land 0x7C0) lsr 6)));
-			Buffer.add_char state.buf (char_of_int (0x80 + (num land 0x3F)))
+			parser_buf_add_char state.buf (char_of_int (0xC0 + ((num land 0x7C0) lsr 6)));
+			parser_buf_add_char state.buf (char_of_int (0x80 + (num land 0x3F)))
 		)
 	else if num < 0x10000 then
 		(
-			Buffer.add_char state.buf (char_of_int (0xE0 + ((num land 0xF000) lsr 12)));
-			Buffer.add_char state.buf (char_of_int (0x80 + ((num land 0xFC0) lsr 6)));
-			Buffer.add_char state.buf (char_of_int (0x80 + (num land 0x3F)))
+			parser_buf_add_char state.buf (char_of_int (0xE0 + ((num land 0xF000) lsr 12)));
+			parser_buf_add_char state.buf (char_of_int (0x80 + ((num land 0xFC0) lsr 6)));
+			parser_buf_add_char state.buf (char_of_int (0x80 + (num land 0x3F)))
 		)
 	else if num <= 0x10FFFF then
 		(
-			Buffer.add_char state.buf (char_of_int (0xF0 + ((num land 0x1C0000) lsr 18)));
-			Buffer.add_char state.buf (char_of_int (0x80 + ((num land 0x03F000) lsr 12)));
-			Buffer.add_char state.buf (char_of_int (0x80 + ((num land 0xFC0) lsr 6)));
-			Buffer.add_char state.buf (char_of_int (0x80 + (num land 0x3F)))
+			parser_buf_add_char state.buf (char_of_int (0xF0 + ((num land 0x1C0000) lsr 18)));
+			parser_buf_add_char state.buf (char_of_int (0x80 + ((num land 0x03F000) lsr 12)));
+			parser_buf_add_char state.buf (char_of_int (0x80 + ((num land 0xFC0) lsr 6)));
+			parser_buf_add_char state.buf (char_of_int (0x80 + (num land 0x3F)))
 		)
 	else
 		raise (UCL_Syntax_Error ("Invalid unicode escape value", state))
 
+(** Parser init state handler *)
+let parser_handle_init state line =
+	match line.[state.pos] with
+	| '#' -> { state with prev_state = UCL_STATE_INIT; state = UCL_STATE_COMMENT }
+	| '{' -> parser_new_object state line ~set_top:true ()
+	| '[' -> parser_new_object state line ~is_array:true ~set_top:false ()
+	| '/' -> 
+		if parser_is_comment state line then
+			{ state with prev_state = UCL_STATE_INIT; state = UCL_STATE_COMMENT }
+		else 
+			raise (UCL_Syntax_Error ("Invalid starting character", state))
+	| c -> 
+		if is_white_unsafe c then 
+			parser_skip_chars is_white_unsafe state line
+		else (* Assume object *)
+			parser_new_object state line ~skip_char:false ()
+
+(** Parser key state handler *)
 let rec parser_handle_key state line = 
 	match line.[state.column] with
 	| '/' | '#' -> 
@@ -196,7 +212,12 @@ let rec parser_handle_key state line =
 		else
 			match c with
 			| '"' -> 
-				parser_read_quoted_string {(parser_next_char state line) with buf = Buffer.create 32 } line
+				{
+					(parser_read_quoted_string {(parser_next_char state line) with buf = `Buf(Buffer.create 32) } line) with
+					prev_state = UCL_STATE_READ_KEY; 
+					state = UCL_STATE_READ_VALUE;
+					key = state.buf
+				}
 			| c -> state
 		
 	
@@ -243,7 +264,9 @@ let parse_in_channel inx =
 		column = 0;
 		pos = 0;
 		state = UCL_STATE_INIT;
-		buf = Buffer.create 32;
+		buf = `Null;
+		key = `Null;
+		value = `Null;
 		stack = [];
 		top = `Null;
 		prev_state = UCL_STATE_INIT;
