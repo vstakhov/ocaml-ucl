@@ -6,6 +6,7 @@ open Stream
 type ucl_state =
 	| UCL_STATE_INIT
 	| UCL_STATE_READ_KEY
+	| UCL_STATE_AFTER_KEY
 	| UCL_STATE_READ_VALUE
 	| UCL_STATE_AFTER_VALUE
 	| UCL_STATE_COMMENT
@@ -32,34 +33,6 @@ type ucl_parser_state = {
 
 exception UCL_Syntax_Error of (string * ucl_parser_state)
 exception UCL_InternalError of string
-
-let u_nl = 0x0A (* \n *)
-let u_sp = 0x20 (* *)
-let u_tab = 0x09 (* *)
-let u_quot = 0x22 (* '' *)
-let u_lbrack = 0x5B (* [ *)
-let u_rbrack = 0x5D (* ] *)
-let u_lbrace = 0x7B (* { *)
-let u_rbrace = 0x7D (* } *)
-let u_colon = 0x3A (* : *)
-let u_dot = 0x2E (* . *)
-let u_comma = 0x2C (* , *)
-let u_minus = 0x2D (* - *)
-let u_slash = 0x2F (* / *)
-let u_bslash = 0x5C (* \ *)
-let u_times = 0x2A (* * *)
-
-(** Match any whitespace character including newlines *)
-let is_white_unsafe c =
-	match Char.code c with
-	| c when c = u_sp || c = u_nl || c = u_tab -> true
-	| _ -> false
-
-(** Match whitespace character excluding newlines *)
-let is_white_safe c =
-	match Char.code c with
-	| c when c = u_sp || c = u_tab -> true
-	| _ -> false
 
 (** Go to the next char *)
 let parser_next_char state line =
@@ -180,6 +153,10 @@ and parser_add_unicode_character num state =
 	else
 		raise (UCL_Syntax_Error ("Invalid unicode escape value", state))
 
+(** Read unquoted string and place it inside the state buffer *)
+let rec parser_read_unquoted_string state line =
+	state
+
 (** Parser init state handler *)
 let parser_handle_init state line =
 	match line.[state.pos] with
@@ -192,8 +169,8 @@ let parser_handle_init state line =
 		else 
 			raise (UCL_Syntax_Error ("Invalid starting character", state))
 	| c -> 
-		if is_white_unsafe c then 
-			parser_skip_chars is_white_unsafe state line
+		if Ucl_util.isspace_unsafe c then 
+			parser_skip_chars Ucl_util.isspace_unsafe state line
 		else (* Assume object *)
 			parser_new_object state line ~skip_char:false ()
 
@@ -206,21 +183,39 @@ let rec parser_handle_key state line =
 		else 
 			raise (UCL_Syntax_Error ("Invalid starting character", state))
 	| c ->
-		if is_white_safe c then
+		if Ucl_util.isspace_safe c then
 			(* Skip whitespaces at the beginning *)
-			parser_handle_key (parser_skip_chars is_white_safe state line) line
+			parser_handle_key (parser_skip_chars Ucl_util.isspace_safe state line) line
 		else
 			match c with
 			| '"' -> 
+				(* JSON like string *)
 				{
-					(parser_read_quoted_string {(parser_next_char state line) with buf = `Buf(Buffer.create 32) } line) with
+					(parser_read_quoted_string 
+						{(parser_next_char state line) with buf = `Buf(Buffer.create 32) } 
+						line) with
 					prev_state = UCL_STATE_READ_KEY; 
-					state = UCL_STATE_READ_VALUE;
+					state = UCL_STATE_AFTER_KEY;
 					key = state.buf
 				}
-			| c -> state
-		
-	
+			| c -> 
+				if Ucl_util.iskeystart c then
+					(* Unquoted string *)
+					{
+						(parser_read_unquoted_string 
+							{(parser_next_char state line) with buf = `Buf(Buffer.create 32) } 
+							line) with
+						prev_state = UCL_STATE_READ_KEY; 
+						state = UCL_STATE_AFTER_KEY;
+						key = state.buf
+					}
+				else
+					raise (UCL_Syntax_Error ("Key begins with an invalid character", state))
+
+(** Handle after key state *)
+let rec parser_handle_after_key state line = 
+	state
+
 let parser_handle_value state line =
 	state
 	
@@ -238,6 +233,8 @@ let parser_parse_stream state inx =
 					parser_state_machine (parser_handle_init state line) line inx
 			| UCL_STATE_READ_KEY ->
 					parser_state_machine (parser_handle_key state line) line inx
+			| UCL_STATE_AFTER_KEY ->
+					parser_state_machine (parser_handle_after_key state line) line inx
 			| UCL_STATE_READ_VALUE ->
 					parser_state_machine (parser_handle_value state line) line inx
 			| UCL_STATE_AFTER_VALUE ->
