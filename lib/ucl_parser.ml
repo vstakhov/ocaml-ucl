@@ -176,7 +176,7 @@ let parser_handle_init state line =
 
 (** Parser key state handler *)
 let rec parser_handle_key state line = 
-	match line.[state.column] with
+	match line.[state.pos] with
 	| '/' | '#' -> 
 		if parser_is_comment state line then
 			{ state with prev_state = UCL_STATE_READ_KEY; state = UCL_STATE_COMMENT }
@@ -213,8 +213,33 @@ let rec parser_handle_key state line =
 					raise (UCL_Syntax_Error ("Key begins with an invalid character", state))
 
 (** Handle after key state *)
-let rec parser_handle_after_key state line = 
-	state
+let parser_handle_after_key state line =
+	let rec parser_after_key_helper state line has_sep =
+		let rec skip_spaces state line =
+			let c = line.[state.pos] in
+			if Ucl_util.isspace_safe c then
+				skip_spaces (parser_next_char state line) line
+			else
+				state
+		in
+		match line.[state.pos] with
+		| ':' | '=' -> {
+					(skip_spaces (parser_next_char state line) line) with
+					prev_state = UCL_STATE_AFTER_KEY;
+					state = UCL_STATE_READ_VALUE;
+				}
+		| ' ' | '\t' -> parser_after_key_helper (skip_spaces state line) line true
+		| '{' | '[' -> { state with prev_state = UCL_STATE_AFTER_KEY;
+					state = UCL_STATE_READ_VALUE;
+				}
+		| c -> if has_sep then
+					{ state with prev_state = UCL_STATE_AFTER_KEY;
+						state = UCL_STATE_READ_VALUE;
+					}
+				else
+					raise (UCL_Syntax_Error ("Invalid character at the end of the key", state))
+	in
+	parser_after_key_helper state line false
 
 let parser_handle_value state line =
 	state
