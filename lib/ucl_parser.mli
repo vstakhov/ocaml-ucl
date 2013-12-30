@@ -5,14 +5,10 @@ type ucl_state =
 	| UCL_STATE_READ_KEY
 	| UCL_STATE_AFTER_KEY
 	| UCL_STATE_READ_VALUE
-	| UCL_STATE_AFTER_VALUE
+	| UCL_STATE_AFTER_VALUE_UNQUOTED
+	| UCL_STATE_AFTER_VALUE_QUOTED
 	| UCL_STATE_COMMENT
 	| UCL_STATE_END
-
-type ucl_buf = [
-	| `Buf of Buffer.t
-	| `Null
-]
 
 type ucl_parser_state = {
 	line : int;
@@ -20,9 +16,9 @@ type ucl_parser_state = {
 	pos : int;
 	state : ucl_state;
 	prev_state : ucl_state;
-	buf : ucl_buf;
-	key : ucl_buf;
-	value : ucl_buf;
+	buf : Buffer.t option;
+	key : Buffer.t option;
+	value : Buffer.t option;
 	stack : ucl list;
 	top : ucl;
 	remain : int;

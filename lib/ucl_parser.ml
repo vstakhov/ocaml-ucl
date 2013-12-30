@@ -8,14 +8,11 @@ type ucl_state =
 	| UCL_STATE_READ_KEY
 	| UCL_STATE_AFTER_KEY
 	| UCL_STATE_READ_VALUE
-	| UCL_STATE_AFTER_VALUE
+	| UCL_STATE_AFTER_VALUE_UNQUOTED
+	| UCL_STATE_AFTER_VALUE_QUOTED
 	| UCL_STATE_COMMENT
 	| UCL_STATE_END
 
-type ucl_buf = [
-	| `Buf of Buffer.t
-	| `Null
-]
 
 type ucl_parser_state = {
 	line : int;
@@ -23,9 +20,9 @@ type ucl_parser_state = {
 	pos : int;
 	state : ucl_state;
 	prev_state : ucl_state;
-	buf : ucl_buf;
-	key : ucl_buf;
-	value : ucl_buf;
+	buf : Buffer.t option;
+	key : Buffer.t option;
+	value : Buffer.t option;
 	stack : ucl list;
 	top : ucl;
 	remain : int;
@@ -68,10 +65,28 @@ let parser_new_object state line ?(skip_char=true) ?(is_array=false) ?(set_top=f
 		top = if set_top then nobj else state.top;
 		}
 
+let parser_add_object state nobj =
+	let top = List.hd state.stack in
+	match top with
+	| `Assoc a -> (match state.key with
+		| Some v -> Hashtbl.add a (Buffer.contents v) nobj; 
+		{ state with
+			key = None;
+			value = None;
+		}
+		| None -> raise (UCL_InternalError "No key defined"))
+	| `List l -> { state with
+			key = None;
+			value = None;
+			stack = nobj :: l @ (List.tl state.stack) (* TODO: slow *)
+		}
+	| _ -> raise (UCL_InternalError "Invalid object in stack")
+			
+
 let parser_buf_add_char buf c =
 	match buf with
-	| `Buf b -> Buffer.add_char b c
-	| `Null -> raise (UCL_InternalError "Buffer is not initialized")
+	| Some b -> Buffer.add_char b c
+	| None -> raise (UCL_InternalError "Buffer is not initialized")
 
 (** Check for multiline comment if previous char is '/' *)
 let parser_is_comment state line =
@@ -99,16 +114,17 @@ let rec parser_read_quoted_string state line =
 	match line.[state.pos] with
 	| '\\' -> parser_read_quoted_string 
 			(parser_read_escape_sequence (parser_next_char state line) line) line
-	| '"' -> state
+	| '"' -> parser_next_char state line
 	| c -> parser_buf_add_char state.buf c; 
 		parser_read_quoted_string (parser_next_char state line) line
 and parser_read_escape_sequence state line = 
 	match line.[state.pos] with
-	| 'n' -> parser_buf_add_char state.buf '\n'; state
-	| 'r' -> parser_buf_add_char state.buf '\r'; state
-	| 't' -> parser_buf_add_char state.buf '\t'; state
-	| 'b' -> parser_buf_add_char state.buf '\b'; state
-	| '\\' -> parser_buf_add_char state.buf '\\'; state
+	| 'n' -> parser_buf_add_char state.buf '\n'; parser_next_char state line
+	| 'r' -> parser_buf_add_char state.buf '\r'; parser_next_char state line
+	| 't' -> parser_buf_add_char state.buf '\t'; parser_next_char state line
+	| 'b' -> parser_buf_add_char state.buf '\b'; parser_next_char state line
+	| '\\' -> parser_buf_add_char state.buf '\\'; parser_next_char state line
+	| '"' -> parser_buf_add_char state.buf '"'; parser_next_char state line
 	| 'u' -> parser_read_unicode_escape (parser_next_char state line) line
 	| _ -> raise (UCL_Syntax_Error ("Invalid escape character", state))
 and parser_read_unicode_escape state line =
@@ -155,10 +171,12 @@ and parser_add_unicode_character num state =
 
 (** Read unquoted string and place it inside the state buffer *)
 let rec parser_read_unquoted_string state line =
-	if valueend line.[state.pos] then
+	if isvalueend line.[state.pos] then
 		state
-	else
+	else (
+		parser_buf_add_char state.buf line.[state.pos];
 		parser_read_unquoted_string (parser_next_char state line) line
+	)
 
 (** Parser init state handler *)
 let parser_handle_init state line =
@@ -195,7 +213,7 @@ let rec parser_handle_key state line =
 				(* JSON like string *)
 				{
 					(parser_read_quoted_string 
-						{(parser_next_char state line) with buf = `Buf(Buffer.create 32) } 
+						{(parser_next_char state line) with buf = Some (Buffer.create 32) } 
 						line) with
 					prev_state = UCL_STATE_READ_KEY; 
 					state = UCL_STATE_AFTER_KEY;
@@ -206,7 +224,7 @@ let rec parser_handle_key state line =
 					(* Unquoted string *)
 					{
 						(parser_read_unquoted_string 
-							{(parser_next_char state line) with buf = `Buf(Buffer.create 32) } 
+							{(parser_next_char state line) with buf = Some (Buffer.create 32) } 
 							line) with
 						prev_state = UCL_STATE_READ_KEY; 
 						state = UCL_STATE_AFTER_KEY;
@@ -244,10 +262,34 @@ let parser_handle_after_key state line =
 	in
 	parser_after_key_helper state line false
 
-let parser_handle_value state line =
-	state
+(** Handle value parsing state *)
+let rec parser_handle_value state line =
+	match line.[state.pos] with
+	| '{' -> parser_new_object state line ()
+	| '[' -> parser_new_object state line ~is_array: true ()
+	| '"' -> (* JSON like string *)
+			{
+				(parser_read_quoted_string
+						{ (parser_next_char state line) with buf = Some (Buffer.create 32) }
+						line) with
+				prev_state = UCL_STATE_READ_VALUE;
+				state = UCL_STATE_AFTER_VALUE_QUOTED;
+				value = state.buf
+			}
+	| c ->
+			if Ucl_util.isspace_safe c then
+				parser_handle_value (parser_skip_chars Ucl_util.isspace_unsafe state line) line
+			else
+				{
+					(parser_read_unquoted_string
+							{ state with buf = Some (Buffer.create 32) }
+							line) with
+					prev_state = UCL_STATE_READ_VALUE;
+					state = UCL_STATE_AFTER_VALUE_UNQUOTED;
+					value = state.buf
+				}
 	
-let parser_handle_after_value state line = 
+let parser_handle_after_value state line is_quoted = 
 	state
 	
 let parser_handle_comment state line = 
@@ -265,8 +307,10 @@ let parser_parse_stream state inx =
 					parser_state_machine (parser_handle_after_key state line) line inx
 			| UCL_STATE_READ_VALUE ->
 					parser_state_machine (parser_handle_value state line) line inx
-			| UCL_STATE_AFTER_VALUE ->
-					parser_state_machine (parser_handle_after_value state line) line inx
+			| UCL_STATE_AFTER_VALUE_QUOTED ->
+					parser_state_machine (parser_handle_after_value state line true) line inx
+			| UCL_STATE_AFTER_VALUE_UNQUOTED ->
+					parser_state_machine (parser_handle_after_value state line false) line inx
 			| UCL_STATE_COMMENT ->
 					parser_state_machine (parser_handle_comment state line) line inx
 			| UCL_STATE_END -> state
@@ -289,9 +333,9 @@ let parse_in_channel inx =
 		column = 0;
 		pos = 0;
 		state = UCL_STATE_INIT;
-		buf = `Null;
-		key = `Null;
-		value = `Null;
+		buf = None;
+		key = None;
+		value = None;
 		stack = [];
 		top = `Null;
 		prev_state = UCL_STATE_INIT;
