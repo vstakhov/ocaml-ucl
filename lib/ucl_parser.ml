@@ -155,7 +155,10 @@ and parser_add_unicode_character num state =
 
 (** Read unquoted string and place it inside the state buffer *)
 let rec parser_read_unquoted_string state line =
-	state
+	if valueend line.[state.pos] then
+		state
+	else
+		parser_read_unquoted_string (parser_next_char state line) line
 
 (** Parser init state handler *)
 let parser_handle_init state line =
