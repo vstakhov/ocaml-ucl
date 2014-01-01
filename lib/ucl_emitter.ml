@@ -2,7 +2,7 @@ open Ucl
 
 let rec json_output_obj init obj = 
 	match obj with
-	| `Assoc obj -> output_assoc init obj
+	| `Assoc a -> output_assoc init a
 	| `List l -> output_list init l
 	| `String s -> init ^ (Printf.sprintf "\"%s\"" s)
 	| `Int i -> init ^ (Printf.sprintf "%d" i)
@@ -27,7 +27,7 @@ and output_assoc init obj =
 		Hashtbl.fold (fun key value buf ->
 				buf ^ (Printf.sprintf "%s\"%s\": %s" 
 						(if buf = "" then "" else ",\n") 
-						key (json_output_obj "" value))
+						key (output_list "" value))
 				) obj init
 	in
 	init ^ "{\n" ^ obj_out "" ^ "\n}"

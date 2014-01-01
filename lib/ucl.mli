@@ -1,7 +1,7 @@
 open Hashtbl
 
 type ucl = [
-	| `Assoc of (string, ucl) Hashtbl.t
+	| `Assoc of (string, ucl list) Hashtbl.t
 	| `Bool of bool
 	| `Float of float
 	| `Int of int
