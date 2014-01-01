@@ -71,7 +71,7 @@ let parser_add_object state nobj =
 	| `Assoc a -> (match state.key with
 				| Some v -> let key = Buffer.contents v in
 						let found = try Hashtbl.find a key with
-						| Not_found -> []
+							| Not_found -> []
 						in
 						Hashtbl.replace a key (nobj :: found);
 						{ state with
@@ -295,7 +295,32 @@ let rec parser_handle_value state line =
 				}
 
 let parser_handle_after_value state line is_quoted =
-	state
+	let rec parser_handle_after_value_helper state line is_quoted got_sep =
+		let c = line.[state.pos] in
+		if Ucl_util.isspace_safe c then
+			parser_handle_after_value_helper
+				(parser_skip_chars Ucl_util.isspace_unsafe state line) line is_quoted got_sep
+		else if parser_is_comment state line then
+			{ state with prev_state = state.state; state = UCL_STATE_COMMENT }
+		else
+			let top = List.hd state.stack in
+			match c with
+			| '}' -> (match top with
+						| `Assoc a ->
+								parser_handle_after_value_helper (parser_next_char state line) line is_quoted true
+						| _ -> raise (UCL_Syntax_Error ("Unmatched end of object", state)) )
+			| ']' -> (match top with
+						| `List l ->
+								parser_handle_after_value_helper (parser_next_char state line) line is_quoted true
+						| _ -> raise (UCL_Syntax_Error ("Unmatched end of array", state)) )
+			| ch ->
+					if isvalueend ch then
+						parser_handle_after_value_helper (parser_next_char state line) line is_quoted true
+					else
+						(if got_sep then state
+							else raise (UCL_Syntax_Error ("Invalid character at the value end", state)))
+	in
+	parser_handle_after_value_helper state line is_quoted false
 
 let parser_handle_comment state line =
 	state
