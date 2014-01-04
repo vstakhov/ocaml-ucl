@@ -7,7 +7,9 @@ type ucl_state =
 	| UCL_STATE_READ_VALUE
 	| UCL_STATE_AFTER_VALUE_UNQUOTED
 	| UCL_STATE_AFTER_VALUE_QUOTED
-	| UCL_STATE_COMMENT
+	| UCL_STATE_COMMENT_START
+	| UCL_STATE_COMMENT_SINGLE
+	| UCL_STATE_COMMENT_MULTI
 	| UCL_STATE_END
 
 type ucl_parser_state = {
@@ -22,6 +24,7 @@ type ucl_parser_state = {
 	stack : ucl list;
 	top : ucl;
 	remain : int;
+	comment_level: int;
 }
 
 exception UCL_Syntax_Error of (string * ucl_parser_state)
